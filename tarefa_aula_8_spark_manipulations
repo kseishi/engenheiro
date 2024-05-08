@@ -1,0 +1,41 @@
+!pip install boto3
+
+import pyspark
+import boto3
+
+from io import StringIO 
+from pyspark.sql import SparkSession
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType 
+from pyspark.sql.types import ArrayType, DoubleType, BooleanType
+from pyspark.sql.functions import col, array_contains
+
+# Criando uma sessão Spark
+spark = SparkSession.builder \
+      .master("local[1]") \
+      .appName("AwariAula08") \
+      .getOrCreate() 
+
+# Importando CSVs da pasta /exercicios/municipios-estados/csv/ e salvando como arquivos JSON no MinIO
+df_csv = spark.read.option("header", True).csv("/exercicios/municipios-estados/csv/")
+df_csv.write.json("s3a://minio-bucket/municipios-estados/json/")
+
+# Importando JSONs da pasta /exercicios/municipios-estados/csv/ e salvando como arquivos CSV no MinIO
+df_json = spark.read.json("/exercicios/municipios-estados/csv/")
+df_json.write.csv("s3a://minio-bucket/municipios-estados/csv_output/")
+
+# Importando CSVs da pasta /exercicios/municipios-estados/csv/ e salvando como arquivo .parquet no MinIO
+df_csv.write.parquet("s3a://minio-bucket/municipios-estados/parquet/")
+
+# Importando CSVs da pasta /exercicios/municipios-estados/csv/ para tabelas no banco de dados PostgreSQL (awari-postgresql-db)
+df_csv.write.format("jdbc") \
+    .option("url", "jdbc:postgresql://localhost:5432/awari-postgresql-db") \
+    .option("dbtable", "municipios_estados_table") \
+    .option("user", "your_username") \
+    .option("password", "your_password") \
+    .option("driver", "org.postgresql.Driver") \
+    .save()
+
+# Visualizando os dados no PostgreSQL usando awari-pg-admin
+
+# Finalizando a sessão Spark
+spark.stop()
