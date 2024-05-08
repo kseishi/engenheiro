@@ -1,0 +1,76 @@
+import os
+import glob
+import pandas as pd
+import boto3
+import botocore
+from datetime import datetime
+from io import StringIO
+
+# Método para salvar no S3/MinIO
+def save_key_to_s3(data_frame, key):
+    csv_buffer = StringIO()
+    csv = data_frame.to_csv(csv_buffer, index=False)
+    client.put_object(Body=csv_buffer.getvalue(), Bucket='aula-07', Key=key)
+    response = client.get_object(Bucket='aula-07', Key=key)
+    return response
+
+# Rota para o CSV que contém os usuários sendo carregados constantemente
+path = '/home/awari/app/aula-07/ingest/diferencial/usuarios.csv'
+
+# Obtém a data e hora atual
+current_time = datetime.now()
+
+# Cria cliente para S3/Minio
+client = boto3.client('s3', 
+    endpoint_url='http://awari-minio-nginx:9000',
+    aws_access_key_id='mnYOiUf07UBjjJwf',
+    aws_secret_access_key='1Qu7X3EmbIYDNXUiuvFSDUJwJ4fWdyT5',
+    aws_session_token=None,
+    config=boto3.session.Config(signature_version='s3v4'),
+    verify=False,
+    region_name='sa-east-1'
+)
+
+# Caminhos no S3/Minio para os arquivos status.csv e usuarios.csv
+key_status = "usuarios/diferencial/status.csv"
+key_usuarios = "usuarios/diferencial/usuarios.csv"
+
+# Verifica se já existe usuarios.csv no bucket
+try:
+    response = client.get_object(Bucket='aula-07', Key=key_usuarios)
+except botocore.exceptions.ClientError as e:
+    if e.response['Error']['Code'] == "NoSuchKey":
+        # Se não existe, faz upload de um CSV em branco para iniciar
+        status_df = pd.read_csv("/home/awari/app/aula-07/scripts/diferencial_usuarios_em_branco.csv")
+        response = save_key_to_s3(status_df, key_usuarios)
+
+usuarios_df = pd.read_csv(response.get("Body"))
+
+# Verifica se existe status.csv no bucket
+try:
+    response = client.get_object(Bucket='aula-07', Key=key_status)
+except botocore.exceptions.ClientError as e:
+    if e.response['Error']['Code'] == "NoSuchKey":
+        # Se não existe, faz upload de um CSV em branco para iniciar
+        data = {'ultima_atualizacao': current_time.strftime("%Y-%m-%d %H:%M:%S")}
+        status_df = pd.read_csv("/home/awari/app/aula-07/scripts/diferencial_status.csv")
+        response = save_key_to_s3(status_df, key_status)
+
+status_df = pd.read_csv(response.get("Body"))
+status_datetime_serie = pd.to_datetime(status_df['ultima_atualizacao'], format='%Y-%m-%d %H:%M:%S')
+
+# Carrega o CSV de usuários localmente
+df = pd.read_csv(path)
+
+# Filtra os usuários com data de criação > última atualização
+usuarios_filtrados_por_data = df[df['criado_em'] > str(status_datetime_serie.iloc[0])]
+usuarios_df = pd.concat([usuarios_df, usuarios_filtrados_por_data], ignore_index=True)
+
+# Atualiza a data de última atualização
+status_df.iloc[0] = usuarios_df['criado_em'].max()
+
+# Atualiza o arquivo de usuários no bucket
+response = save_key_to_s3(usuarios_df, key_usuarios)
+
+# Atualiza o arquivo de status no bucket com data_hora do usuário mais recenete criado
+response = save_key_to_s3(status_df, key_status)
